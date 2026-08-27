@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# restrict_process_port.py
+#
 # Problem 2: Allow traffic only on a specific TCP port (default 4040) for
 # a given process name (default "myprocess"). All other outbound TCP
 # traffic from that process is dropped. Traffic from other processes is
@@ -21,33 +23,35 @@
 #   sudo python3 restrict_process_port.py
 
 from bcc import BPF
+from bcc.libbcc import lib as libbcc
+import os
 
 ALLOWED_PORT = 4040
 TARGET_COMM = "myprocess"
 CGROUP_PATH = "/sys/fs/cgroup/myproc_cg"
 
+# BPF_CGROUP_INET_EGRESS from the kernel's enum bpf_attach_type
+# (include/uapi/linux/bpf.h). This numeric value is part of the stable
+# kernel UAPI and does not change between kernel versions, so we use it
+# directly instead of relying on a BCC constant name that may differ
+# across BCC versions/builds.
+BPF_CGROUP_INET_EGRESS = 1
+
 bpf_text = f"""
 #include <linux/ip.h>
 #include <linux/tcp.h>
-#include <linux/bpf.h>
 
 #define ALLOWED_PORT {ALLOWED_PORT}
-#define TARGET_COMM "{TARGET_COMM}"
+
+// NOTE: We don't check the process name (bpf_get_current_comm) inside
+// this program because that helper is not permitted for CGROUP_SKB
+// programs on this kernel. It's also unnecessary: this program is only
+// ever attached to /sys/fs/cgroup/myproc_cg, and only "myprocess" is
+// placed into that cgroup. So cgroup membership itself IS the process
+// filter -- any traffic reaching this hook already belongs to our
+// target process.
 
 int cgroup_egress_filter(struct __sk_buff *skb) {{
-    char comm[16];
-    bpf_get_current_comm(&comm, sizeof(comm));
-
-    // If this packet is not from our target process, allow everything.
-    #pragma unroll
-    for (int i = 0; i < 16; i++) {{
-        if (comm[i] != TARGET_COMM[i])
-            goto allow_all;
-        if (comm[i] == 0)
-            break;
-    }}
-
-    // It IS the target process -> only allow the configured port.
     if (skb->protocol != htons(ETH_P_IP))
         return 1;
 
@@ -62,21 +66,32 @@ int cgroup_egress_filter(struct __sk_buff *skb) {{
 
     if (ntohs(tcp->dest) == ALLOWED_PORT)
         return 1;   // allow
-    return 0;       // drop everything else for this process
-
-allow_all:
-    return 1;
+    return 0;       // drop everything else for processes in this cgroup
 }}
 """
 
 if __name__ == "__main__":
     b = BPF(text=bpf_text)
     fn = b.load_func("cgroup_egress_filter", BPF.CGROUP_SKB)
-    b.attach_func(fn, CGROUP_PATH, BPF.CGROUP_INET_EGRESS)
+
+    # This is exactly what BPF.attach_func() does internally in versions of
+    # BCC where it's available -- it just calls libbpf's bpf_prog_attach().
+    # We call it directly here since this BCC build doesn't expose the
+    # attach_func wrapper method.
+    cgroup_fd = os.open(CGROUP_PATH, os.O_RDONLY)
+
+    ret = libbcc.bpf_prog_attach(fn.fd, cgroup_fd, BPF_CGROUP_INET_EGRESS, 0)
+    if ret < 0:
+        os.close(cgroup_fd)
+        raise OSError(
+            "bpf_prog_attach failed (return code %d). "
+            "Make sure you're running as root and the cgroup path exists." % ret
+        )
 
     print(f"Filter attached to cgroup: {CGROUP_PATH}")
-    print(f"Process '{TARGET_COMM}' may only send TCP traffic to port {ALLOWED_PORT}.")
-    print("All other processes are unaffected. Press Ctrl+C to detach.")
+    print(f"Any process placed in this cgroup (e.g. '{TARGET_COMM}') may only")
+    print(f"send TCP traffic to port {ALLOWED_PORT}. Processes outside this")
+    print("cgroup are unaffected. Press Ctrl+C to detach.")
 
     try:
         while True:
@@ -84,6 +99,7 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         pass
     finally:
-        b.detach_func(fn, CGROUP_PATH, BPF.CGROUP_INET_EGRESS)
+        # Mirrors BPF.detach_func() -- calls libbpf's bpf_prog_detach2().
+        libbcc.bpf_prog_detach2(fn.fd, cgroup_fd, BPF_CGROUP_INET_EGRESS)
+        os.close(cgroup_fd)
         print("\nFilter detached.")
-        
