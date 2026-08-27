@@ -1,1 +1,50 @@
+## AccuKnox eBPF Assignment ##
 
+Solutions for the AccuKnox technical assignment, covering eBPF-based packet
+filtering (via BCC/XDP and cgroup hooks) and a Go concurrency explanation.
+
+## Environment used
+
+- Ubuntu 22.04.5 LTS (VMware virtual machine)
+- BCC (BPF Compiler Collection) — `bpfcc-tools`, `python3-bpfcc`
+- Tested against a separate physical/host machine on the same network to
+  properly validate packet drops (loopback/self-connections can bypass the
+  XDP hook, so testing was done from an external machine).
+
+## Problem 1: Drop TCP packets on a configurable port
+
+**File:** `drop_port.py`
+
+Uses an XDP eBPF program attached to a network interface. A BPF array map
+holds the currently blocked port, so it can be updated live from userspace
+without reloading or restarting the program.
+
+### Setup on The Ubuntu Machine 22.04.5
+```bash
+sudo apt update
+sudo apt install -y bpfcc-tools python3-bpfcc linux-headers-$(somesh -r)
+```
+
+### Run on the Ubuntu Machine
+```bash
+sudo python3 drop_port.py <interface> [port]
+# Example:
+sudo python3 drop_port.py ens33 4040
+```
+Find your interface name with `ip a`. While running, you can type a new
+port number at the prompt to change what's being blocked, live.
+
+### Testing from Host Windows 11 machine
+Tested from a separate machine (Windows host on the same VMware network)
+using PowerShell's `Test-NetConnection`:
+
+```powershell
+Test-NetConnection -ComputerName <VM-IP> -Port <blocked-port>
+```
+
+- Blocked port → `TcpTestSucceeded : False`
+- An unrelated port, with a listener running on the VM (`nc -l <port>`) →
+  `TcpTestSucceeded : True`
+
+This confirms the drop is specific to the configured port and not a
+general connectivity issue.
