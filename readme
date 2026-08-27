@@ -3,15 +3,16 @@
 Solutions for the AccuKnox technical assignment, covering eBPF-based packet
 filtering (via BCC/XDP and cgroup hooks) and a Go concurrency explanation.
 
-## Environment used
+## Environment used ##
 
 - Ubuntu 22.04.5 LTS (VMware virtual machine)
+- Windows 11 (HostMachine)
 - BCC (BPF Compiler Collection) — `bpfcc-tools`, `python3-bpfcc`
 - Tested against a separate physical/host machine on the same network to
   properly validate packet drops (loopback/self-connections can bypass the
   XDP hook, so testing was done from an external machine).
 
-## Problem 1: Drop TCP packets on a configurable port
+## Problem 1: Drop TCP packets on a configurable port ##
 
 **File:** `drop_port.py`
 
@@ -19,13 +20,13 @@ Uses an XDP eBPF program attached to a network interface. A BPF array map
 holds the currently blocked port, so it can be updated live from userspace
 without reloading or restarting the program.
 
-### Setup on The Ubuntu Machine 22.04.5
+### Setup on The Ubuntu Machine 22.04.5 ##
 ```bash
 sudo apt update
 sudo apt install -y bpfcc-tools python3-bpfcc linux-headers-$(somesh -r)
 ```
 
-### Run on the Ubuntu Machine
+### Run on the Ubuntu Machine ##
 ```bash
 sudo python3 drop_port.py <interface> [port]
 # Example:
@@ -34,7 +35,7 @@ sudo python3 drop_port.py ens33 4040
 Find your interface name with `ip a`. While running, you can type a new
 port number at the prompt to change what's being blocked, live.
 
-### Testing from Host Windows 11 machine
+### Testing from Host Windows 11 ##
 Tested from a separate machine (Windows host on the same VMware network)
 using PowerShell's `Test-NetConnection`:
 
@@ -48,3 +49,43 @@ Test-NetConnection -ComputerName <VM-IP> -Port <blocked-port>
 
 This confirms the drop is specific to the configured port and not a
 general connectivity issue.
+
+## Problem 2: Restrict a process to a single port ##
+
+**File:** `restrict_process_port.py`
+
+Since packets alone don't carry process identity, this uses a **cgroup +
+CGROUP_SKB egress hook** instead of XDP. Only processes placed inside a
+specific cgroup are restricted; all other processes on the system are
+unaffected.
+
+### Setup on Ubuntu Machine ##
+```bash
+sudo mkdir -p /sys/fs/cgroup/myproc_cg
+
+# Simulate the target process (since a real "myprocess" binary may not exist):
+exec -a myprocess sleep 3600 &
+echo $! | sudo tee /sys/fs/cgroup/myproc_cg/cgroup.procs
+```
+
+### Run on Ubuntu Machine ##
+```bash
+sudo python3 restrict_process_port.py
+```
+
+By default, only outbound TCP traffic to port 4040 is allowed for a
+process named `myprocess`; everything else from that process is dropped.
+Traffic from other processes is untouched.
+
+## Problem 3: Go code explanation ##
+
+**File:** `explanation.md`
+
+Covers:
+1. How `chan func()`, `go func(){}()`, and `range` over a channel work
+2. Worker-pool use cases for these constructs
+3. Why the loop creates exactly 4 concurrent workers
+4. Why the channel buffer size of 10 matters
+5. Why `"HERE1"` is not guaranteed to print, and how to fix it with
+   `sync.WaitGroup`
+
