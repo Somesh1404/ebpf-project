@@ -86,3 +86,4 @@ if __name__ == "__main__":
     finally:
         b.detach_func(fn, CGROUP_PATH, BPF.CGROUP_INET_EGRESS)
         print("\nFilter detached.")
+        
