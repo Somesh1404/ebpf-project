@@ -77,3 +77,4 @@ if __name__ == "__main__":
     finally:
         b.remove_xdp(iface, 0)
         print("\nXDP program detached. All ports unblocked.")
+        
