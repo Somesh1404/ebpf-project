@@ -67,10 +67,7 @@ if __name__ == "__main__":
     b = BPF(text=bpf_text)
     fn = b.load_func("cgroup_egress_filter", BPF.CGROUP_SKB)
 
-    # This is exactly what BPF.attach_func() does internally in versions of
-    # BCC where it's available -- it just calls libbpf's bpf_prog_attach().
-    # We call it directly here since this BCC build doesn't expose the
-    # attach_func wrapper method.
+    
     cgroup_fd = os.open(CGROUP_PATH, os.O_RDONLY)
 
     ret = libbcc.bpf_prog_attach(fn.fd, cgroup_fd, BPF_CGROUP_INET_EGRESS, 0)
