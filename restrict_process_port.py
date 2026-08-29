@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # restrict_process_port.py
 #
 # Problem 2: Allow traffic only on a specific TCP port (default 4040) for
@@ -30,12 +29,6 @@ ALLOWED_PORT = 4040
 TARGET_COMM = "myprocess"
 CGROUP_PATH = "/sys/fs/cgroup/myproc_cg"
 
-# BPF_CGROUP_INET_EGRESS from the kernel's enum bpf_attach_type
-# (include/uapi/linux/bpf.h). This numeric value is part of the stable
-# kernel UAPI and does not change between kernel versions, so we use it
-# directly instead of relying on a BCC constant name that may differ
-# across BCC versions/builds.
-BPF_CGROUP_INET_EGRESS = 1
 
 bpf_text = f"""
 #include <linux/ip.h>
